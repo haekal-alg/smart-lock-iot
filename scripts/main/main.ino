@@ -89,6 +89,7 @@ void loop() {
             input_password = "";  // reset the input password
             Serial.println();
             Serial.println("[*] Emptied password buffer");
+            is_first_time = 1;
         } else if (key == '#') {
             Serial.println();
 
@@ -114,6 +115,10 @@ void loop() {
 
         if (!(card_uuid == RFID_PASSWORD)) {
             failed_attempt(2);
+            
+            // to temporary halt the reader. it reads quite quickly. it could flood the serial monitor
+            delay(2000); 
+            
             return;
         }
 
@@ -154,7 +159,7 @@ void door_unlock(int method) {
     int response_code = ThingSpeak.writeFields(CHANNEL_NUMBER, WRITE_API_KEY);
     
     if (response_code == 200) {
-        Serial.println("[*] Data on Thingspeak has been updated");
+        Serial.println("[+] Data has been sent to Thingspeak");
     } 
     else {
         Serial.println("[-] Problem updating channel. HTTP error code " + String(response_code));
