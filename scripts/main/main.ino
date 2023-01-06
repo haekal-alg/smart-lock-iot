@@ -1,4 +1,5 @@
 #include "Credentials.h"
+#include "ThingSpeak.h"
 
 // ----- BLYNK CONFIG -----
 #define BLYNK_PRINT Serial
@@ -32,16 +33,16 @@ String input_password;
 MFRC522 mfrc522(SS_PIN, RST_PIN);  // Create MFRC522 instance.
 
 // ----- OTHERS -----
-#define LOCK_DELAY 5000
+#define LOCK_DELAY 5000 // waiting period, 5 seconds
 bool is_first_time = 1;
+
+WiFiClient client;
 
 BLYNK_WRITE(V0) {
     int LED_value = param.asInt();
 
     if (LED_value == 1) { 
-        Serial.println("[+] Door is unlocked via Blynk");
-        // Blynk.virtualWrite(0, 1);
-        door_unlock();
+        door_unlock(3);
         Blynk.virtualWrite(0, 0);
     } 
 }
@@ -60,6 +61,9 @@ void setup() {
     // Initiate Blynk
     Blynk.begin(BLYNK_AUTH_TOKEN, WIFI_SSID, WIFI_PASS);
 
+    // Inititate Thingspeak 
+    ThingSpeak.begin(client);
+
     Serial.println("[+] System has been initialized!");
 }
 
@@ -72,11 +76,9 @@ void loop() {
     bool is_rfid_not_found = !mfrc522.PICC_IsNewCardPresent() || !mfrc522.PICC_ReadCardSerial();
     bool is_waiting_input = is_rfid_not_found || !key;
 
-    if (is_waiting_input) {
-        if (is_first_time) {
-            Serial.println("\n[*] Waiting input...");
-            is_first_time = 0;
-        }
+    if (is_waiting_input && is_first_time) {
+        Serial.println("\n[*] Waiting input...");
+        is_first_time = 0;
     }
 
     // if input from keypad is detected
@@ -95,8 +97,7 @@ void loop() {
                 return;
             }
 
-            Serial.println("[+] Valid Password. DOOR UNLOCKED!");
-            door_unlock();
+            door_unlock(1);
             input_password = "";  // reset the input password
 
         } else {
@@ -104,7 +105,7 @@ void loop() {
         }
     }
 
-    // if card near rfid reader is detected
+    // if card is near rfid reader
     if (!is_rfid_not_found) {
         String card_uuid = rfid_read();
 
@@ -116,15 +117,49 @@ void loop() {
             return;
         }
 
-        Serial.println("[+] Authorized tag. DOOR UNLOCK!");
-        door_unlock();
+        door_unlock(2);
     }
 }
 
-void door_unlock() {
+void door_unlock(int method) {
+    /*
+    method = 1 -> keypad
+    method = 2 -> rfid tag
+    method = 3 -> Blynk
+    */
+    Serial.print("[+] Door is unlocked via ");
+    ThingSpeak.setField(method, 1);
+    if (method == 1) {
+        Serial.println("Keypad");
+        ThingSpeak.setField(2, 0);
+        ThingSpeak.setField(3, 0);
+    }
+    else if (method == 2) {
+        Serial.println("RFID Card");
+        ThingSpeak.setField(1, 0);
+        ThingSpeak.setField(3, 0);
+    }
+    else if (method == 3) {
+        Serial.println("Blynk");
+        ThingSpeak.setField(1, 0);
+        ThingSpeak.setField(2, 0);
+    }
+
+    // open lock first then send data
     digitalWrite(INTERNAL_LED, LOW);  // Unlocks door
-    delay(LOCK_DELAY);
+    delay(LOCK_DELAY); // TODO: change this to millis
     digitalWrite(INTERNAL_LED, HIGH);  // Locks door
+    
+    // send '1' to whatever method was used to thingspeak
+    int response_code = ThingSpeak.writeFields(CHANNEL_NUMBER, WRITE_API_KEY);
+    
+    if (response_code == 200) {
+        Serial.println("[*] Data on Thingspeak has been updated");
+    } 
+    else {
+        Serial.println("[-] Problem updating channel. HTTP error code " + String(response_code));
+    }
+    
     is_first_time = 1;
 }
 
@@ -132,6 +167,7 @@ void failed_attempt(int method) {
     /*
     method = 1 -> keypad
     method = 2 -> rfid tag
+    method = 3 -> Blynk
     */
     if (method == 1) {
         Serial.println("[-] Invalid Password. ACCESS DENIED!");
